@@ -272,7 +272,7 @@ function matchCard(m, lg) {
   const side = (s, home) => `<div class="side ${home ? 'home' : ''}">${home ? '' : img(s.logo)}<span class="${s.win ? 'win' : ''}">${esc(s.name)}</span>${home ? img(s.logo) : ''}</div>`;
   const centre = m.state === 'pre' ? `<span class="ko">${kick(m.ko)}</span>` : m.state === 'other' ? `<b>${esc(m.status)}</b>`
     : `<span class="score ${m.state === 'live' ? 'live' : ''}">${esc(m.home.score ?? '-')}&nbsp; ${esc(m.away.score ?? '-')}</span>${m.state === 'live' ? `<div class="live">${esc(m.status)}</div>` : ''}`;
-  const sub = [m.state === 'post' ? (m.status === 'FT' ? 'Full time' : m.status) : '', m.home.pens != null ? `${m.home.pens}-${m.away.pens} pens` : '', m.venue].filter(Boolean).join(' · ');
+  const sub = [m.state === 'post' ? (m.status === 'FT' ? 'Full time' : m.status) : m.state === 'pre' ? 'Predicted XI ›' : '', m.home.pens != null ? `${m.home.pens}-${m.away.pens} pens` : '', m.venue].filter(Boolean).join(' · ');
   return `<div class="match ${fav ? 'fav' : ''}" data-match="${m.id}" data-league="${lg || ''}"><div class="mrow">${side(m.home, true)}<div class="centre">${centre}</div>${side(m.away, false)}</div>${sub ? `<div class="msub">${esc(sub)}</div>` : ''}</div>`;
 }
 function grouped(list, lg) {
@@ -357,6 +357,7 @@ async function matchDetail(lg, id) {
   const labels = [['possessionPct', 'Possession %'], ['totalShots', 'Shots'], ['shotsOnTarget', 'Shots on target'], ['wonCorners', 'Corners'], ['foulsCommitted', 'Fouls'], ['offsides', 'Offsides'], ['yellowCards', 'Yellow cards'], ['redCards', 'Red cards'], ['saves', 'Saves'], ['totalPasses', 'Passes']];
   const rows = labels.filter(([k]) => hs[k] != null && as[k] != null);
   if (rows.length) out += '<span class="pill" style="border-color:var(--cyan)">Team stats</span><div class="panel">' + rows.map(([k, l]) => `<div class="stat"><b>${esc(hs[k])}</b><span>${l}</span><b>${esc(as[k])}</b></div>`).join('') + '</div>';
+  out += '<div id="xi" class="panel">Loading line-ups…</div>'; setTimeout(() => initXi(lg, id, d, h, a), 0);
   for (const s of [h, a]) { const r = (d.rosters || []).find(x => x.team?.id === s.id); if (!r?.roster?.length) continue;
     const ps = r.roster.slice().sort((x, y) => (y.starter - x.starter) || ((+x.jersey || 99) - (+y.jersey || 99)));
     out += `<span class="pill" style="border-color:var(--gold)">${esc(s.name)} line-up${r.formation ? ' · ' + esc(r.formation) : ''}</span><div class="panel">` + ps.map(p =>
@@ -441,3 +442,86 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 
 fillSeasons(); render(); refresh();
 if (!store.get('asked', false)) favDialog();
+
+// ---------- Line-ups: Predicted XI always, Confirmed when announced, My XI ----------
+// FotMob's predicted-XI endpoint doesn't allow cross-origin requests, so the web app's prediction is
+// "Our predicted XI": each team's starting XI from its most recent completed match (clearly labelled estimate).
+const FORMS = ['4-3-3', '4-2-3-1', '4-4-2', '4-1-4-1', '3-5-2', '3-4-3', '3-4-2-1', '5-3-2', '5-4-1'];
+function xiLayout(formation, st) {
+  const cat = p => p.startsWith('G') ? 0 : p.startsWith('DM') ? 1.5 : (p.includes('B') || p.startsWith('CD') || p.startsWith('D')) ? 1 : p.startsWith('AM') ? 2.5 : (p.startsWith('F') || p.startsWith('S') || p.startsWith('CF')) ? 3 : 2;
+  const side = p => (p.endsWith('-L') || p.startsWith('L')) ? 0 : (p.endsWith('-R') || p.startsWith('R')) ? 2 : 1;
+  const idx = st.map((_, i) => i).sort((x, y) => (cat(st[x].pos) - cat(st[y].pos)) || (side(st[x].pos) - side(st[y].pos)));
+  const gk = idx.find(i => cat(st[i].pos) === 0) ?? idx[0], of = idx.filter(i => i !== gk);
+  let lines = (formation || '').split('-').map(Number).filter(n => n > 0);
+  if (lines.reduce((x, y) => x + y, 0) !== of.length) lines = of.length === 10 ? [4, 4, 2] : [of.length];
+  const out = [{ ...st[gk], x: .5, y: .08 }]; let k = 0;
+  lines.forEach((n, li) => { const ch = of.slice(k, k + n).sort((x, y) => side(st[x].pos) - side(st[y].pos)); k += n;
+    ch.forEach((s, i) => out.push({ ...st[s], x: (i + 1) / (ch.length + 1), y: .08 + (li + 1) * (.84 / lines.length) })); });
+  return { formation, players: out };
+}
+function xiFromRoster(r) {
+  const st = (r?.roster || []).filter(p => p.starter).map(p => ({ name: p.athlete?.displayName || '', num: p.jersey, pos: p.position?.abbreviation || '' }));
+  return st.length === 11 ? xiLayout(r.formation, st) : null;
+}
+async function xiEstimate(lg, teamId) {
+  const l = lg === 'eng.fa' ? 'eng.1' : lg;
+  const ev = (await getJSON(`${SITE}${l}/teams/${teamId}/schedule`)).events || [];
+  const last = ev.filter(e => e.competitions?.[0]?.status?.type?.state === 'post').sort((x, y) => y.date.localeCompare(x.date))[0];
+  if (!last) return null;
+  const d = await getJSON(`${SITE}${l}/summary?event=${last.id}`);
+  return xiFromRoster((d.rosters || []).find(r => r.team?.id === teamId));
+}
+function mineXi(f, names) {
+  const lines = f.split('-').map(Number), out = [{ name: names[0], x: .5, y: .08 }]; let k = 1;
+  lines.forEach((n, li) => { const ch = names.slice(k, k + n); k += n; ch.forEach((nm, i) => out.push({ name: nm, x: (i + 1) / (ch.length + 1), y: .08 + (li + 1) * (.84 / lines.length) })); });
+  return { formation: f, players: out };
+}
+function pitchHtml(t) {
+  return `<div class="pitch">${t.players.map(p => `<div class="pp" style="left:${(p.x * 100).toFixed(1)}%;top:${((1 - p.y) * 100).toFixed(1)}%"><span class="pn">${esc(p.num || '')}</span><span class="pl">${esc((p.name || '').split(' ').pop())}</span></div>`).join('')}</div>`;
+}
+async function initXi(lg, id, d, h, a) {
+  const box = document.getElementById('xi'); if (!box) return;
+  const conf = { h: xiFromRoster((d.rosters || []).find(r => r.team?.id === h.id)), a: xiFromRoster((d.rosters || []).find(r => r.team?.id === a.id)) };
+  const hasConf = !!(conf.h || conf.a);
+  const st = { kind: hasConf ? 'c' : 'p', home: true, pred: null, edit: false, picked: [], form: '4-3-3', squad: null };
+  const key = () => `myxi.${id}.${st.home ? h.id : a.id}`;
+  const mine = () => { try { return JSON.parse(localStorage.getItem(key()) || 'null'); } catch { return null; } };
+  const chip = (k, v, label, sel) => `<button class="chip${sel ? ' on' : ''}" data-x${k}="${v}">${esc(label)}</button>`;
+  const draw = () => {
+    if (!document.body.contains(box)) return;
+    let html = '<div class="xih">Line-ups</div><div class="chips">' + (hasConf ? chip('k', 'c', 'Confirmed', st.kind === 'c') : '') + chip('k', 'p', 'Predicted', st.kind === 'p') + chip('k', 'm', 'My XI', st.kind === 'm') + '</div>'
+      + '<div class="chips">' + chip('t', 'h', h.name, st.home) + chip('t', 'a', a.name, !st.home) + '</div>';
+    if (st.edit) {
+      html += `<div class="sub">Tap players in order: goalkeeper first, then defenders → attackers. (${st.picked.length}/11)</div><div class="chips">${FORMS.map(f => chip('f', f, f, f === st.form)).join('')}</div>`
+        + (st.squad ? st.squad.map(p => { const i = st.picked.indexOf(p.name); return `<div class="lp${i >= 0 ? ' picked' : ''}" data-xp="${esc(p.name)}"><span class="j">${i >= 0 ? i + 1 : ''}</span><span class="grow">${esc(p.name)}</span><span class="sub">${esc(p.pos)}</span></div>`; }).join('') : '<div class="loading">Loading squad…</div>')
+        + `<div class="chips"><button class="chip on" data-xsave="1" ${st.picked.length === 11 ? '' : 'disabled'}>Save</button><button class="chip" data-xcancel="1">Cancel</button></div>`;
+      box.innerHTML = html; return;
+    }
+    let t = null, label;
+    if (st.kind === 'c') { t = st.home ? conf.h : conf.a; label = '<div class="xil" style="color:var(--green)">Confirmed line-ups (ESPN)</div>'; }
+    else if (st.kind === 'm') { const m = mine(); t = m && mineXi(m.f, m.p); label = '<div class="xil">Your own predicted XI (saved in this browser)</div>'; }
+    else { t = st.pred && (st.home ? st.pred.h : st.pred.a);
+      label = `<div class="xil">${st.pred ? "Our predicted XI — estimate from each team's last starting line-up, not official" : 'Loading predicted XI…'}</div><div class="xiw">PREDICTION — not the official team sheet</div>`; }
+    html += label + (t?.formation ? `<div class="sub">Formation ${esc(t.formation)}</div>` : '')
+      + (t ? pitchHtml(t) : `<div class="sub" style="padding:12px 0">${st.kind === 'm' ? "You haven't picked an XI for this team yet." : st.kind === 'p' && !st.pred ? 'Loading…' : 'No line-up available for this team yet.'}</div>`)
+      + (st.kind === 'm' ? `<button class="chip on" data-xedit="1">${mine() ? 'Edit my XI' : 'Pick my XI'}</button>` : '');
+    box.innerHTML = html;
+  };
+  box.addEventListener('click', async e => {
+    const b = e.target.closest('[data-xk],[data-xt],[data-xf],[data-xp],[data-xsave],[data-xcancel],[data-xedit]'); if (!b) return; e.stopPropagation();
+    if (b.dataset.xk) st.kind = b.dataset.xk;
+    if (b.dataset.xt) { st.home = b.dataset.xt === 'h'; if (st.edit) st.edit = false; }
+    if (b.dataset.xf) st.form = b.dataset.xf;
+    if (b.dataset.xp) { const n = b.dataset.xp, i = st.picked.indexOf(n); if (i >= 0) st.picked.splice(i, 1); else if (st.picked.length < 11) st.picked.push(n); }
+    if (b.dataset.xcancel) st.edit = false;
+    if (b.dataset.xsave && st.picked.length === 11) { localStorage.setItem(key(), JSON.stringify({ f: st.form, p: st.picked })); st.edit = false; }
+    if (b.dataset.xedit) { const m = mine(); st.edit = true; st.form = m?.f || '4-3-3'; st.picked = m?.p?.slice() || []; st.squad = null; draw();
+      const tid = st.home ? h.id : a.id, l = lg === 'eng.fa' ? 'eng.1' : lg;
+      const r = await getJSON(`${SITE}${l}/teams/${tid}/roster`).catch(() => null);
+      st.squad = (r?.athletes || []).map(x => ({ name: x.displayName, pos: x.position?.abbreviation || '' })); }
+    draw();
+  });
+  draw();
+  const [eh, ea] = await Promise.all([xiEstimate(lg, h.id).catch(() => null), xiEstimate(lg, a.id).catch(() => null)]);
+  st.pred = { h: eh, a: ea }; draw();
+}
