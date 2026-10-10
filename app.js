@@ -7,7 +7,7 @@ const COMPS = [
   { slug: 'sco.1', label: 'Scottish Prem', title: 'Scottish Premiership' },
   { slug: 'eng.fa', label: 'FA Cup', title: 'FA Cup', cup: true },
 ];
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.4.2';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
 const CORE = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues/';
 const UK = 'Europe/London';
@@ -109,10 +109,25 @@ async function matches(season, current, league) {
   return { results: all.filter(m => m.state !== 'pre').slice(-30).reverse(), fixtures: [], live: [] };
 }
 const transferRe = /\b(transfers?|signs?|signed|signing|deal|bid|loan|swoop|fee|move for|joins?|rumou?rs?|gossip|target|contract|talks|release clause|free agent)\b/i;
+const staticJSON = path => fetch(path + '?t=' + Math.floor(Date.now() / 6e5), { cache: 'no-cache' }).then(r => r.ok ? r.json() : null).catch(() => null);
+const rssItems = (list, kind) => (list || []).map(x => ({ ...x, date: x.date ? new Date(x.date) : null, kind }));
+// BBC/Sky RSS reach phones as same-origin static JSON refreshed by a GitHub Action (the feeds have no CORS headers).
+async function loadClubNews() {
+  S.clubNews = null; if (!S.fav) return;
+  const j = await staticJSON(`data/clubnews/${S.fav.id}.json`); S.clubNews = rssItems(j?.items, 'club'); if (S.tab === 'News') render();
+}
 async function news(league) {
-  const d = await getJSON(`${SITE}${league}/news?limit=50`);
-  return (d.articles || []).filter(a => a.links?.web?.href).map(a => ({ title: a.headline, summary: a.description === a.headline ? '' : (a.description || ''),
+  const [d, rss] = await Promise.all([getJSON(`${SITE}${league}/news?limit=50`).catch(() => ({})), league === 'eng.1' ? staticJSON('data/news.json') : null]);
+  const espnItems = (d.articles || []).filter(a => a.links?.web?.href).map(a => ({ title: a.headline, summary: a.description === a.headline ? '' : (a.description || ''),
     url: a.links.web.href, image: a.images?.[0]?.url, source: a.type === 'Media' ? 'ESPN Video' : 'ESPN', date: parseDate(a.published) }));
+  const all = espnItems.concat(rssItems(rss?.latest, 'latest'), rssItems(rss?.transfers, 'transfers'));
+  if (!all.length) throw new Error('No news sources reachable');
+  return dedupeNews(all);
+}
+function dedupeNews(list) {
+  const seen = new Set();
+  return list.filter(n => { const k1 = n.url.split('?')[0], k2 = n.title.toLowerCase().replace(/[^a-z0-9]/g, ''); if (seen.has(k1) || seen.has(k2)) return false; seen.add(k1); seen.add(k2); return true; })
+    .sort((a, b) => (b.date || 0) - (a.date || 0));
 }
 let fotPaths = null;
 async function ratings(season) {
@@ -316,10 +331,11 @@ function newsPage() {
   let h = `<div class="seg">${modes.map((m, i) => `<button data-news="${i}" class="${S.newsMode === i ? 'sel' : ''}">${m}</button>`).join('')}</div>`;
   if (!S.news) return h;
   let items = S.news;
+  if (S.newsMode === 0) items = items.filter(n => n.kind !== 'transfers');
   if (S.newsMode === 1) items = items.filter(n => transferRe.test(n.title + ' ' + n.summary));
   if (S.newsMode === 2 && S.fav) { const kw = [S.fav.name, S.fav.short].concat(S.fav.name.split(' ').filter(w => w.length > 3 && !/united|city|town|hotspur|albion|manchester|west/i.test(w))).map(w => w.toLowerCase());
-    items = items.filter(n => kw.some(k => (n.title + ' ' + n.summary).toLowerCase().includes(k))); }
-  if (!items.length) h += '<div class="err">Nothing here right now.</div>';
+    items = dedupeNews((S.clubNews || []).concat(items.filter(n => kw.some(k => (n.title + ' ' + n.summary).toLowerCase().includes(k))))); }
+  if (!items.length) h += S.newsMode === 2 ? `<div class="err">No ${esc(S.fav.short)} stories found right now (checked the BBC Sport club feed and all news feeds).</div>` : '<div class="err">Nothing here right now.</div>';
   return h + items.map(n => `<a class="news" href="${esc(n.url)}" target="_blank" rel="noopener">${n.image ? `<img src="${esc(n.image)}" loading="lazy" alt="">` : '<img alt="">'}
     <div><b>${esc(n.title)}</b>${n.summary ? `<p>${esc(n.summary)}</p>` : ''}<span class="src">${n.source} · ${ago(n.date)}</span></div></a>`).join('');
 }
@@ -431,7 +447,7 @@ document.addEventListener('click', e => {
   else if (d.res) { S.results = d.res === '1'; render(); }
   else if (d.news) { S.newsMode = +d.news; render(); }
   else if (d.pred) { const m = S.matches.fixtures.find(x => x.id === d.pred), p = S.preds[d.pred] || { h: 0, a: 0 }; const h = p.h + (d.w === 'h' ? +d.d : 0), a = p.a + (d.w === 'a' ? +d.d : 0); predict(m, h, a); }
-  else if (d.fav != null) { S.fav = S.clubs.find(c => c.id === d.fav) || null; store.set('fav', S.fav); store.set('asked', true); $('#dialog').hidden = true; render(); }
+  else if (d.fav != null) { S.fav = S.clubs.find(c => c.id === d.fav) || null; store.set('fav', S.fav); store.set('asked', true); $('#dialog').hidden = true; render(); loadClubNews(); }
   else if (d.bg) { S.bg = d.bg; store.set('bg', d.bg); settingsDialog(); renderHeader(); }
   else if (d.refresh != null) { $('#dialog').hidden = true; refresh(); }
   else if (d.favretry != null) favDialog();
@@ -459,7 +475,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
 }
 
-fillSeasons(); render(); refresh();
+fillSeasons(); render(); refresh(); loadClubNews();
 if (!store.get('asked', false)) favDialog();
 
 // ---------- Line-ups: Predicted XI always, Confirmed when announced, My XI ----------
