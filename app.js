@@ -7,6 +7,7 @@ const COMPS = [
   { slug: 'sco.1', label: 'Scottish Prem', title: 'Scottish Premiership' },
   { slug: 'eng.fa', label: 'FA Cup', title: 'FA Cup', cup: true },
 ];
+const APP_VERSION = '2.4.1';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports/soccer/';
 const CORE = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues/';
 const UK = 'Europe/London';
@@ -232,7 +233,7 @@ function page(t) {
   if (S.loading && !S.standings) h += '<div class="loading">Loading…</div>';
   if (S.comp.cup) h += { Matches: cupMatches, Scorers: () => leaderList(S.cupLeaders?.goals, 'Goals', '#00FF85'), Assists: () => leaderList(S.cupLeaders?.assists, 'Assists', '#04F5FF'), News: newsPage }[t]();
   else h += { Table: tablePage, Scorers: () => leaderList(S.leaders?.goals, 'Goals', '#00FF85'), Assists: () => leaderList(S.leaders?.assists, 'Assists', '#04F5FF'), Ratings: ratingsPage, Matches: matchesPage, News: newsPage, Predict: predictPage }[t]();
-  h += `<div class="foot">${t === 'Ratings' ? 'Ratings: FotMob · ' : ''}Data: ESPN</div><div class="credit"><span>Made by Danny G</span></div>`;
+  h += `<div class="foot">${t === 'Ratings' ? 'Ratings: FotMob · ' : ''}Data: ESPN</div><div class="credit"><span>Made by Danny G · v${APP_VERSION}</span></div>`;
   return h;
 }
 function tablePage() {
@@ -270,7 +271,7 @@ function ratingsPage() {
   const key = s => s.toLowerCase().replace(/&/g, 'and').replace(/\b(afc|fc)\b/g, '').replace(/[^a-z]/g, '');
   return '<span class="pill" style="border-color:var(--gold)">Season average rating (FotMob)</span>' + S.ratings.map(p => {
     const fav = S.fav && (key(S.fav.name) === key(p.team) || key(S.fav.short) === key(p.team));
-    const c = p.rating >= 7.5 ? '#00A86B' : p.rating >= 7 ? '#3D7BFF' : '#E07000';
+    const c = p.rating >= 7.5 ? '#00875A' : p.rating >= 7 ? '#2D5BFF' : '#C2410C';
     return `<div class="card ${fav ? 'fav' : ''}"><span class="rank" style="color:var(--gold)">${p.rank}</span>${img(fotPhoto(p.id), 'photo', p.name)}
       <div class="grow"><div class="name">${esc(p.name)}</div><div class="sub">${esc(p.team)} · ${p.apps} apps · ${p.mins}'</div></div>
       <span class="val" style="background:${c};border-color:${c}">${(+p.rating).toFixed(2)}</span></div>`; }).join('');
@@ -410,7 +411,7 @@ function settingsDialog() {
   const bgs = [['trophy', 'Trophy'], ['pitch', 'Pitch'], ['stadium', 'Stadium night'], ['club', 'Club colours'], ['plain', 'Plain']];
   dialog(`<h3>Settings</h3><b>Background</b>${bgs.map(([k, l]) => `<div class="opt ${S.bg === k ? 'sel' : ''}" data-bg="${k}">${l}</div>`).join('')}
     <button class="dbtn" data-refresh>↻ Refresh data</button>
-    <p class="sub" style="margin-top:14px"><b style="color:#fff">About</b></p><p class="sub">PL Table (web) v2.4.1 · Made by Danny G</p>
+    <p class="sub" style="margin-top:14px"><b style="color:#fff">About</b></p><p class="sub">PL Table (web) v${APP_VERSION} · Made by Danny G</p>
     <p class="sub">Install: in Safari tap Share → Add to Home Screen. Favourites and predictions are saved on this device.</p>`);
 }
 
