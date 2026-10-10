@@ -116,6 +116,9 @@ async function news(league) {
 }
 let fotPaths = null;
 async function ratings(season) {
+  // Primary: same-origin static copy refreshed every 6h by a GitHub Action (FotMob blocks browser cross-origin requests).
+  try { const r = await fetch('data/ratings.json?t=' + Math.floor(Date.now() / 6e5), { cache: 'no-cache' });
+    if (r.ok) { const j = await r.json(); if (j.seasons?.[season]) return j.seasons[season]; if (Object.keys(j.seasons || {}).length) return null; } } catch {}
   if (!fotPaths) { const d = await getJSON('https://www.fotmob.com/api/data/leagues?id=47'); fotPaths = {}; d.stats.seasonStatLinks.forEach(l => fotPaths[l.Name] = l.RelativePath.slice(0, l.RelativePath.lastIndexOf('/') + 1)); }
   const p = fotPaths[`${season}/${season + 1}`]; if (!p) return null;
   const d = await getJSON('https://data.fotmob.com/' + p + 'rating.json');
@@ -517,9 +520,10 @@ async function initXi(lg, id, d, h, a) {
     if (st.kind === 'c') { t = st.home ? conf.h : conf.a; label = '<div class="xil" style="color:var(--green)">Confirmed line-ups (ESPN)</div>'; }
     else if (st.kind === 'm') { const m = mine(); t = m && mineXi(m.f, m.p); label = '<div class="xil">Your own predicted XI (saved in this browser)</div>'; }
     else { t = st.pred && (st.home ? st.pred.h : st.pred.a);
-      label = `<div class="xil">${st.pred ? "Our predicted XI — estimate from each team's last starting line-up, not official" : 'Loading predicted XI…'}</div><div class="xiw">PREDICTION — not the official team sheet</div>`; }
+      label = `<div class="xil">${!st.pred ? 'Loading predicted XI…' : st.pred.src || "Our predicted XI — estimate from each team's last starting line-up, not official"}</div><div class="xiw">PREDICTION — not the official team sheet</div>`; }
     html += label + (t?.formation ? `<div class="sub">Formation ${esc(t.formation)}</div>` : '')
       + (t ? pitchHtml(t) : `<div class="sub" style="padding:12px 0">${st.kind === 'm' ? "You haven't picked an XI for this team yet." : st.kind === 'p' && !st.pred ? 'Loading…' : 'No line-up available for this team yet.'}</div>`)
+      + (t?.unavailable?.length ? `<div class="xiw" style="margin-top:8px">Unavailable</div><div class="sub" style="display:block">${t.unavailable.map(esc).join(' · ')}</div>` : '')
       + (st.kind === 'm' ? `<button class="chip on" data-xedit="1">${mine() ? 'Edit my XI' : 'Pick my XI'}</button>` : '');
     box.innerHTML = html;
   };
@@ -538,6 +542,22 @@ async function initXi(lg, id, d, h, a) {
     draw();
   });
   draw();
+  const fm = await fotmobXi(lg, h.name, a.name, parseDate(c0(d).date)).catch(() => null);
+  if (fm) { st.pred = fm; draw(); return; }
   const [eh, ea] = await Promise.all([xiEstimate(lg, h.id).catch(() => null), xiEstimate(lg, a.id).catch(() => null)]);
   st.pred = { h: eh, a: ea }; draw();
+}
+
+const c0 = d => d.header?.competitions?.[0] || {};
+const tkey = n => (n || '').toLowerCase().replace(/&/g, 'and').replace(/\b(afc|fc)\b/g, '').replace(/[^a-z]/g, '');
+const sameT = (x, y) => { x = tkey(x); y = tkey(y); return x === y || x.includes(y) || y.includes(x) || (x.length >= 5 && y.length >= 5 && x.slice(0, 5) === y.slice(0, 5)); };
+let lineupsCache;
+// FotMob predicted XI from the same-origin static file (refreshed every 3h by a GitHub Action).
+async function fotmobXi(lg, home, away, ko) {
+  lineupsCache = lineupsCache || fetch('data/lineups.json?t=' + Math.floor(Date.now() / 6e5), { cache: 'no-cache' }).then(r => r.ok ? r.json() : null).catch(() => null);
+  const j = await lineupsCache; if (!j) return null;
+  const m = j.matches.find(x => x.league === lg && (sameT(x.home, home) || sameT(x.away, away)) && (!ko || Math.abs(new Date(x.utc) - ko) < 36 * 3600e3));
+  if (!m || m.type !== 'predicted') return null;
+  const fix = t => t && { ...t, players: t.players.map(p => ({ ...p, num: p.num || '' })) };
+  return { h: fix(m.h), a: fix(m.a), src: 'Predicted XI via FotMob (not official)' };
 }
