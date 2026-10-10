@@ -1,7 +1,8 @@
 :root { --purple:#37003C; --deep:#1E0024; --deepalt:#3A0A42; --green:#00FF85; --greendeep:#00965F; --cyan:#04F5FF; --magenta:#E90052; --gold:#FFC83D; --plus:#5CFFA8; --minus:#FF7AA8; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin:0; height:100%; background:#14001A; color:#fff; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overscroll-behavior:none; }
-body { display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
+html { background:#14001A; }
+html, body { margin:0; height:100%; color:#fff; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overscroll-behavior:none; }
+body { background:transparent; display:flex; flex-direction:column; height:100dvh; overflow:hidden; }
 button, select, input { font:inherit; color:#fff; }
 #bg { position:fixed; inset:0; z-index:-1; background:#14001A; }
 #bg.trophy { background: url(icons/trophy.png) center 55%/70% no-repeat, linear-gradient(#2a0530, #14001A 50%, #2a0530); }
@@ -140,10 +141,12 @@ select option { color:#000; }
 .xil{color:var(--gold);font-size:12px;font-weight:700;margin-top:6px}
 .xiw{color:#FF4F8B;font-size:11px;font-weight:900}
 .lp.picked{background:rgba(0,112,60,.5);border-radius:8px}
-.pitch{position:relative;width:100%;aspect-ratio:.78;margin-top:8px;border-radius:12px;overflow:hidden;border:2px solid rgba(255,255,255,.5);
+.xipitch{position:relative;width:100%;aspect-ratio:.78;margin-top:8px;border-radius:12px;overflow:hidden;border:2px solid rgba(255,255,255,.5);
   background:repeating-linear-gradient(#1F7A3A 0 12.5%,#23883F 12.5% 25%)}
-.pitch:before{content:"";position:absolute;left:22%;right:22%;bottom:0;height:16%;border:2px solid rgba(255,255,255,.5);border-bottom:0}
-.pitch:after{content:"";position:absolute;left:37%;right:37%;top:-10%;height:20%;border:2px solid rgba(255,255,255,.5);border-radius:50%}
+.xipitch:before{content:"";position:absolute;left:22%;right:22%;bottom:0;height:16%;border:2px solid rgba(255,255,255,.5);border-bottom:0}
+.xipitch:after{content:"";position:absolute;left:37%;right:37%;top:-10%;height:20%;border:2px solid rgba(255,255,255,.5);border-radius:50%}
 .pp{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;width:76px;z-index:1}
 .pn{width:28px;height:28px;border-radius:50%;background:#E90052;color:#fff;font-weight:900;font-size:11px;display:flex;align-items:center;justify-content:center}
 .pl{font-size:10px;font-weight:700;color:#fff;background:rgba(0,0,0,.45);border-radius:4px;padding:0 3px;max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+[data-fav],[data-bg],[data-close],[data-refresh],[data-favretry],[data-tab],[data-comp],[data-match],[data-club]{cursor:pointer;-webkit-tap-highlight-color:rgba(255,255,255,.15);touch-action:manipulation}

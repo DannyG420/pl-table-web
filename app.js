@@ -14,7 +14,8 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const store = {
   get: (k, d) => { try { const v = localStorage.getItem('plt.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set: (k, v) => localStorage.setItem('plt.' + k, JSON.stringify(v)),
+  // try/catch: Safari private mode / storage-disabled must not break the click handler (state still applies for this session)
+  set: (k, v) => { try { localStorage.setItem('plt.' + k, JSON.stringify(v)); } catch {} },
 };
 
 const S = {
@@ -121,6 +122,12 @@ async function ratings(season) {
 }
 const fotPhoto = id => `https://images.fotmob.com/image_resources/playerimages/${id}.png`;
 async function clubs() {
+  // ESPN's /teams list sends no CORS header to real browsers, so build the club list from the standings (CORS-enabled).
+  try {
+    const st = await standings(null, 'eng.1');
+    const list = st.rows.map(r => ({ id: r.id, name: r.team, short: r.short || r.team, abbr: r.abbr, color: r.color || null, logo: r.logo }));
+    if (list.length) return list.sort((a, b) => a.name.localeCompare(b.name));
+  } catch {}
   const d = await getJSON(SITE + 'eng.1/teams');
   return d.sports[0].leagues[0].teams.map(({ team: t }) => ({ id: t.id, name: t.displayName, short: t.shortDisplayName, abbr: t.abbreviation, color: t.color ? '#' + t.color : null, logo: small(t.logos?.[0]?.href) })).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -136,9 +143,9 @@ async function refresh() {
     const teams = {}; st.rows.forEach(r => teams[r.id] = r);
     const [m, n, l, r] = await Promise.all([
       matches(year, !season, lg).catch(() => null), news(lg).catch(() => null), leaders(year, teams, lg).catch(() => null),
-      lg === 'eng.1' ? ratings(year).catch(() => null) : null,
+      lg === 'eng.1' ? ratings(year).catch(() => 'err') : null,
     ]);
-    S.matches = m; S.news = n || S.news; S.leaders = l; S.ratings = r; S.ratingsNone = lg === 'eng.1' && !r;
+    S.matches = m; S.news = n || S.news; S.leaders = l; S.ratings = r === 'err' ? null : r; S.ratingsErr = r === 'err'; S.ratingsNone = lg === 'eng.1' && !r;
     if (S.comp.cup) await loadCup();
     settle(); S.updated = new Date();
   } catch (e) { S.error = e.message; }
@@ -257,6 +264,7 @@ function leaderList(list, label, color) {
       <span class="val" style="border-color:${color}">${p.value}</span></div>`).join('');
 }
 function ratingsPage() {
+  if (S.ratingsErr) return '<div class="err">Player ratings couldn\'t be loaded from FotMob in this browser. Ratings are always available in the Android app. Try ↻ Refresh later.</div>';
   if (S.ratingsNone) return '<div class="err">FotMob has no player ratings for this season.</div>';
   if (!S.ratings) return '';
   const key = s => s.toLowerCase().replace(/&/g, 'and').replace(/\b(afc|fc)\b/g, '').replace(/[^a-z]/g, '');
@@ -395,19 +403,20 @@ async function clubPage(lg, id) {
 function dialog(html) { $('#dialog').innerHTML = `<div class="dbox">${html}<button class="dbtn" data-close>Done</button></div>`; $('#dialog').hidden = false; }
 async function favDialog() {
   if (!S.clubs.length) { dialog('<h3>Pick your team</h3><div class="loading">Loading clubs…</div>'); S.clubs = await clubs().catch(() => []); }
+  if (!S.clubs.length) { dialog('<h3>Pick your team</h3><div class="err">Couldn\'t load the club list. Check your connection.</div><button class="dbtn" data-favretry>Try again</button>'); return; }
   dialog('<h3>Pick your team</h3><div class="opt" data-fav="">No favourite</div>' + S.clubs.map(c => `<div class="opt ${isFav(c.id) ? 'sel' : ''}" data-fav="${c.id}">${img(c.logo)}${esc(c.name)}${isFav(c.id) ? ' ★' : ''}</div>`).join(''));
 }
 function settingsDialog() {
   const bgs = [['trophy', 'Trophy'], ['pitch', 'Pitch'], ['stadium', 'Stadium night'], ['club', 'Club colours'], ['plain', 'Plain']];
   dialog(`<h3>Settings</h3><b>Background</b>${bgs.map(([k, l]) => `<div class="opt ${S.bg === k ? 'sel' : ''}" data-bg="${k}">${l}</div>`).join('')}
     <button class="dbtn" data-refresh>↻ Refresh data</button>
-    <p class="sub" style="margin-top:14px"><b style="color:#fff">About</b></p><p class="sub">PL Table (web) v2.3.3 · Made by Danny G</p>
+    <p class="sub" style="margin-top:14px"><b style="color:#fff">About</b></p><p class="sub">PL Table (web) v2.4.1 · Made by Danny G</p>
     <p class="sub">Install: in Safari tap Share → Add to Home Screen. Favourites and predictions are saved on this device.</p>`);
 }
 
 // ---------- events ----------
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-comp],[data-tab],[data-club],[data-match],[data-res],[data-news],[data-pred],[data-fav],[data-bg],[data-close],[data-refresh]');
+  const t = e.target.closest('[data-comp],[data-tab],[data-club],[data-match],[data-res],[data-news],[data-pred],[data-fav],[data-bg],[data-close],[data-refresh],[data-favretry]');
   if (!t) return;
   const d = t.dataset;
   if (d.comp != null) { const c = COMPS[+d.comp]; if (c === S.comp) return; const oldLg = league(); S.comp = c;
@@ -421,6 +430,7 @@ document.addEventListener('click', e => {
   else if (d.fav != null) { S.fav = S.clubs.find(c => c.id === d.fav) || null; store.set('fav', S.fav); store.set('asked', true); $('#dialog').hidden = true; render(); }
   else if (d.bg) { S.bg = d.bg; store.set('bg', d.bg); settingsDialog(); renderHeader(); }
   else if (d.refresh != null) { $('#dialog').hidden = true; refresh(); }
+  else if (d.favretry != null) favDialog();
   else if (d.close != null) { $('#dialog').hidden = true; store.set('asked', true); }
 });
 document.addEventListener('change', e => { if (e.target.id === 'liveOn') { S.liveOn = e.target.checked; render(); } });
@@ -438,7 +448,12 @@ setInterval(() => { if (!document.hidden && S.matches?.live?.length && !S.season
 const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
 if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !standalone && !store.get('hintDone', false)) $('#install').hidden = false;
 $('#installX').onclick = () => { $('#install').hidden = true; store.set('hintDone', true); };
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  // When a new service worker takes over (new deploy), reload once so the fresh JS/CSS is used.
+  const hadCtrl = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl && !reloaded) { reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+}
 
 fillSeasons(); render(); refresh();
 if (!store.get('asked', false)) favDialog();
@@ -477,7 +492,7 @@ function mineXi(f, names) {
   return { formation: f, players: out };
 }
 function pitchHtml(t) {
-  return `<div class="pitch">${t.players.map(p => `<div class="pp" style="left:${(p.x * 100).toFixed(1)}%;top:${((1 - p.y) * 100).toFixed(1)}%"><span class="pn">${esc(p.num || '')}</span><span class="pl">${esc((p.name || '').split(' ').pop())}</span></div>`).join('')}</div>`;
+  return `<div class="xipitch">${t.players.map(p => `<div class="pp" style="left:${(p.x * 100).toFixed(1)}%;top:${((1 - p.y) * 100).toFixed(1)}%"><span class="pn">${esc(p.num || '')}</span><span class="pl">${esc((p.name || '').split(' ').pop())}</span></div>`).join('')}</div>`;
 }
 async function initXi(lg, id, d, h, a) {
   const box = document.getElementById('xi'); if (!box) return;
